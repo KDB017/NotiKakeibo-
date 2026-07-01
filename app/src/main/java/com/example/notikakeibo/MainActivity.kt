@@ -17,6 +17,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val result = PayPayParser.parse("取引が完了しました。\n金額：10,000円\n取引番号：05014451438866456576\n店舗名：Google")
+        android.util.Log.d("PayPayTest", "result = $result")
         setContent {
             NotiKakeiboTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
