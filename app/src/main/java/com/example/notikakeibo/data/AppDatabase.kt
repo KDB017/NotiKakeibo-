@@ -5,8 +5,10 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.notikakeibo.data.dao.CategoryDao
+import com.example.notikakeibo.data.dao.StoreDictionaryDao
 import com.example.notikakeibo.data.dao.TransactionDao
 import com.example.notikakeibo.data.entity.CategoryEntity
+import com.example.notikakeibo.data.entity.StoreDictionaryEntity
 import com.example.notikakeibo.data.entity.SubcategoryEntity
 import com.example.notikakeibo.data.entity.TransactionEntity
 
@@ -14,14 +16,16 @@ import com.example.notikakeibo.data.entity.TransactionEntity
     entities = [
         CategoryEntity::class,
         SubcategoryEntity::class,
-        TransactionEntity::class
+        TransactionEntity::class,
+        StoreDictionaryEntity::class
     ],
-    version = 1
+    version = 2
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao
     abstract fun categoryDao(): CategoryDao
+    abstract fun storeDictionaryDao(): StoreDictionaryDao
 
     companion object {
         @Volatile
@@ -33,7 +37,10 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "notikakeibo.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
     }

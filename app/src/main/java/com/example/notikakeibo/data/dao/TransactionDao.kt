@@ -33,4 +33,8 @@ interface TransactionDao {
         ORDER BY t.timestamp DESC
     """)
     suspend fun getAllWithCategory(): List<TransactionWithCategory>
+
+    // 指定した取引の分類（subcategoryId）を更新する。
+    @Query("UPDATE transactions SET subcategoryId = :subcategoryId WHERE transactionId = :transactionId")
+    suspend fun updateCategory(transactionId: String, subcategoryId: Long)
 }
