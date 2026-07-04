@@ -37,4 +37,9 @@ interface TransactionDao {
     // 指定した取引の分類（subcategoryId）を更新する。
     @Query("UPDATE transactions SET subcategoryId = :subcategoryId WHERE transactionId = :transactionId")
     suspend fun updateCategory(transactionId: String, subcategoryId: Long)
+
+    // 未分類（subcategoryId が null）の取引だけ取得。
+    @Query("SELECT * FROM transactions WHERE subcategoryId IS NULL")
+    suspend fun getUnclassified(): List<TransactionEntity>
+
 }

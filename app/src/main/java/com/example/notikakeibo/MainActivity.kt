@@ -30,6 +30,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.notikakeibo.classifier.ClassificationService
+import com.example.notikakeibo.classifier.AnthropicClassifier
 import com.example.notikakeibo.data.AppDatabase
 import com.example.notikakeibo.data.dao.SubcategoryWithParent
 import com.example.notikakeibo.data.dao.TransactionWithCategory
@@ -63,7 +65,6 @@ fun TransactionListScreen(
 ) {
     var transactions by remember { mutableStateOf<List<TransactionWithCategory>>(emptyList()) }
     var subcategories by remember { mutableStateOf<List<SubcategoryWithParent>>(emptyList()) }
-    // 今どの取引をタップして編集中か。null なら編集ダイアログは閉じてる。
     var editingTx by remember { mutableStateOf<TransactionWithCategory?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -81,6 +82,7 @@ fun TransactionListScreen(
 
         Text("取引一覧", fontSize = 20.sp)
 
+        // テスト取引を追加（店名をGoogleにしてダミー分類を試せるように）。
         Button(
             onClick = {
                 scope.launch {
@@ -90,7 +92,7 @@ fun TransactionListScreen(
                             TransactionEntity(
                                 transactionId = "TEST-" + System.currentTimeMillis(),
                                 amount = 1234,
-                                storeName = "テスト店舗",
+                                storeName = "スターバックス",
                                 timestamp = System.currentTimeMillis(),
                                 subcategoryId = null
                             )
@@ -104,11 +106,32 @@ fun TransactionListScreen(
             Text("テスト取引を追加")
         }
 
+        // 未分類の取引をまとめて分類にかける。
+        Button(
+            onClick = {
+                scope.launch {
+                    val db = AppDatabase.getInstance(context)
+                    val classifier = AnthropicClassifier(db.categoryDao())
+                    val service = ClassificationService(context, classifier)
+
+                    withContext(Dispatchers.IO) {
+                        val unclassified = db.transactionDao().getUnclassified()
+                        for (tx in unclassified) {
+                            service.classifyTransaction(tx.transactionId, tx.storeName, tx.amount)
+                        }
+                    }
+                    reload()
+                }
+            },
+            modifier = Modifier.padding(vertical = 8.dp)
+        ) {
+            Text("未分類を分類")
+        }
+
         HorizontalDivider()
 
         LazyColumn {
             items(transactions) { tx ->
-                // 行をタップしたら、その取引を編集対象にする（ダイアログが開く）。
                 TransactionRow(
                     tx = tx,
                     onClick = { editingTx = tx }
@@ -118,7 +141,6 @@ fun TransactionListScreen(
         }
     }
 
-    // 編集中の取引があるとき、ジャンル選択ダイアログを表示。
     val target = editingTx
     if (target != null) {
         CategoryPickerDialog(
@@ -130,8 +152,8 @@ fun TransactionListScreen(
                     withContext(Dispatchers.IO) {
                         dao.updateCategory(target.transactionId, selectedSubcategoryId)
                     }
-                    editingTx = null   // ダイアログを閉じる
-                    reload()           // 一覧を再読み込みして反映
+                    editingTx = null
+                    reload()
                 }
             }
         )
@@ -143,7 +165,7 @@ fun TransactionRow(tx: TransactionWithCategory, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }   // タップ可能にする
+            .clickable { onClick() }
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -170,7 +192,6 @@ fun CategoryPickerDialog(
         onDismissRequest = onDismiss,
         title = { Text("ジャンルを選択") },
         text = {
-            // ジャンル候補を縦スクロールで並べる。
             LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
                 items(subcategories) { sub ->
                     Text(

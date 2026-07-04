@@ -1,5 +1,6 @@
 package com.example.notikakeibo.notification
-
+import com.example.notikakeibo.classifier.ClassificationService
+import com.example.notikakeibo.classifier.AnthropicClassifier
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -42,6 +43,27 @@ class NotificationListener : NotificationListenerService() {
                 CoroutineScope(Dispatchers.IO).launch {
                     val dao = AppDatabase.getInstance(applicationContext).transactionDao()
                     dao.insert(entity)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val db = AppDatabase.getInstance(applicationContext)
+                        db.transactionDao().insert(entity)
+
+                        // 保存した直後に自動分類する。
+                        val classifier = AnthropicClassifier(db.categoryDao())
+                        val service = ClassificationService(applicationContext, classifier)
+                        service.classifyTransaction(
+                            entity.transactionId,
+                            entity.storeName,
+                            entity.amount
+                        )
+
+                        // 確認ログ
+                        val all = db.transactionDao().getAllWithCategory()
+                        Log.d("TxSave", "保存＋分類完了。取引数=${all.size}")
+                        for (t in all) {
+                            val genre = if (t.majorName != null) "${t.majorName}>${t.minorName}" else "未分類"
+                            Log.d("TxSave", "取引[${t.storeName}] ¥${t.amount} → $genre")
+                        }
+                    }
 
                     // 確認：保存後、全取引を数えてログに出す。
                     val all = dao.getAll()
