@@ -1,4 +1,4 @@
-package com.example.notikakeibo
+package com.example.notikakeibo.notification
 
 data class PayPayPayment(
     val amount: Int,

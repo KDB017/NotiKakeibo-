@@ -1,0 +1,11 @@
+# 改行コードを自動正規化（リポジトリ内はLFに統一）
+* text=auto eol=lf
+
+# Windows専用スクリプトはCRLFのまま
+*.bat text eol=crlf
+
+# バイナリは変換しない
+*.png binary
+*.jpg binary
+*.jar binary
+*.keystore binary

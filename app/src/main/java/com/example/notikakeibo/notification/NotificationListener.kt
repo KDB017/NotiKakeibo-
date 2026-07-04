@@ -1,4 +1,4 @@
-package com.example.notikakeibo
+package com.example.notikakeibo.notification
 
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
