@@ -42,4 +42,18 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE subcategoryId IS NULL")
     suspend fun getUnclassified(): List<TransactionEntity>
 
+    // 大ジャンルごとに金額を合計する（未分類は除く）。
+    // 期間で絞れるように、開始・終了のtimestampを受け取る。
+    @Query("""
+        SELECT
+            c.name AS majorName,
+            SUM(t.amount) AS totalAmount
+        FROM transactions AS t
+        INNER JOIN subcategories AS s ON t.subcategoryId = s.id
+        INNER JOIN categories AS c ON s.categoryId = c.id
+        WHERE t.timestamp >= :startTime AND t.timestamp < :endTime
+        GROUP BY c.id
+        ORDER BY totalAmount DESC
+    """)
+    suspend fun getCategorySummary(startTime: Long, endTime: Long): List<CategorySummary>
 }

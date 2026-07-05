@@ -18,10 +18,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -30,16 +33,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.notikakeibo.classifier.ClassificationService
 import com.example.notikakeibo.classifier.AnthropicClassifier
+import com.example.notikakeibo.classifier.ClassificationService
 import com.example.notikakeibo.data.AppDatabase
+import com.example.notikakeibo.data.dao.CategorySummary
 import com.example.notikakeibo.data.dao.SubcategoryWithParent
 import com.example.notikakeibo.data.dao.TransactionWithCategory
-import com.example.notikakeibo.data.entity.TransactionEntity
 import com.example.notikakeibo.ui.theme.NotiKakeiboTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,7 +52,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             NotiKakeiboTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    TransactionListScreen(
+                    MainScreen(
                         modifier = Modifier.padding(innerPadding),
                         context = this
                     )
@@ -58,11 +62,84 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// 今月の開始（今月1日0時）と終了（来月1日0時）のtimestampを返す。
+fun currentMonthRange(): Pair<Long, Long> {
+    val cal = Calendar.getInstance()
+    cal.set(Calendar.DAY_OF_MONTH, 1)
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    val start = cal.timeInMillis
+    cal.add(Calendar.MONTH, 1)   // 来月へ
+    val end = cal.timeInMillis
+    return start to end
+}
+
 @Composable
-fun TransactionListScreen(
-    modifier: Modifier = Modifier,
-    context: android.content.Context
-) {
+fun MainScreen(modifier: Modifier = Modifier, context: android.content.Context) {
+    // 選択中のタブ。0=一覧, 1=集計
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        TabRow(selectedTabIndex = selectedTab) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("一覧") }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("集計") }
+            )
+        }
+
+        when (selectedTab) {
+            0 -> TransactionListScreen(context = context)
+            1 -> SummaryScreen(context = context)
+        }
+    }
+}
+
+@Composable
+fun SummaryScreen(context: android.content.Context) {
+    var summary by remember { mutableStateOf<List<CategorySummary>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        val (start, end) = currentMonthRange()
+        val dao = AppDatabase.getInstance(context).transactionDao()
+        summary = withContext(Dispatchers.IO) { dao.getCategorySummary(start, end) }
+    }
+
+    val total = summary.sumOf { it.totalAmount }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text("今月の支出", fontSize = 20.sp)
+        Text("合計 ¥$total", fontSize = 16.sp, modifier = Modifier.padding(vertical = 8.dp))
+        HorizontalDivider()
+
+        if (summary.isEmpty()) {
+            Text("分類済みの支出がまだありません", modifier = Modifier.padding(top = 16.dp))
+        } else {
+            LazyColumn {
+                items(summary) { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(row.majorName, fontSize = 16.sp)
+                        Text("¥${row.totalAmount}", fontSize = 16.sp)
+                    }
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TransactionListScreen(context: android.content.Context) {
     var transactions by remember { mutableStateOf<List<TransactionWithCategory>>(emptyList()) }
     var subcategories by remember { mutableStateOf<List<SubcategoryWithParent>>(emptyList()) }
     var editingTx by remember { mutableStateOf<TransactionWithCategory?>(null) }
@@ -78,42 +155,14 @@ fun TransactionListScreen(
         reload()
     }
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
 
-        Text("取引一覧", fontSize = 20.sp)
-
-        // テスト取引を追加（店名をGoogleにしてダミー分類を試せるように）。
-        Button(
-            onClick = {
-                scope.launch {
-                    val dao = AppDatabase.getInstance(context).transactionDao()
-                    withContext(Dispatchers.IO) {
-                        dao.insert(
-                            TransactionEntity(
-                                transactionId = "TEST-" + System.currentTimeMillis(),
-                                amount = 1234,
-                                storeName = "スターバックス",
-                                timestamp = System.currentTimeMillis(),
-                                subcategoryId = null
-                            )
-                        )
-                    }
-                    reload()
-                }
-            },
-            modifier = Modifier.padding(vertical = 8.dp)
-        ) {
-            Text("テスト取引を追加")
-        }
-
-        // 未分類の取引をまとめて分類にかける。
         Button(
             onClick = {
                 scope.launch {
                     val db = AppDatabase.getInstance(context)
                     val classifier = AnthropicClassifier(db.categoryDao())
                     val service = ClassificationService(context, classifier)
-
                     withContext(Dispatchers.IO) {
                         val unclassified = db.transactionDao().getUnclassified()
                         for (tx in unclassified) {
@@ -132,10 +181,7 @@ fun TransactionListScreen(
 
         LazyColumn {
             items(transactions) { tx ->
-                TransactionRow(
-                    tx = tx,
-                    onClick = { editingTx = tx }
-                )
+                TransactionRow(tx = tx, onClick = { editingTx = tx })
                 HorizontalDivider()
             }
         }
@@ -207,9 +253,7 @@ fun CategoryPickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("キャンセル")
-            }
+            TextButton(onClick = onDismiss) { Text("キャンセル") }
         }
     )
 }
