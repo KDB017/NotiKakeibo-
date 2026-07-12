@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,13 +31,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notikakeibo.classifier.AnthropicClassifier
 import com.example.notikakeibo.classifier.ClassificationService
 import com.example.notikakeibo.data.AppDatabase
-import com.example.notikakeibo.data.dao.CategorySummary
 import com.example.notikakeibo.data.dao.SubcategoryWithParent
 import com.example.notikakeibo.data.dao.TransactionWithCategory
 import com.example.notikakeibo.ui.theme.NotiKakeiboTheme
@@ -62,37 +67,33 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 今月の開始（今月1日0時）と終了（来月1日0時）のtimestampを返す。
-fun currentMonthRange(): Pair<Long, Long> {
+// monthOffset = 0 なら今月、-1 なら先月、+1 なら来月。
+// 戻り値：その月の (開始timestamp, 終了timestamp, 表示ラベル)
+fun monthRange(monthOffset: Int): Triple<Long, Long, String> {
     val cal = Calendar.getInstance()
+    cal.add(Calendar.MONTH, monthOffset)
     cal.set(Calendar.DAY_OF_MONTH, 1)
     cal.set(Calendar.HOUR_OF_DAY, 0)
     cal.set(Calendar.MINUTE, 0)
     cal.set(Calendar.SECOND, 0)
     cal.set(Calendar.MILLISECOND, 0)
     val start = cal.timeInMillis
-    cal.add(Calendar.MONTH, 1)   // 来月へ
+    val year = cal.get(Calendar.YEAR)
+    val month = cal.get(Calendar.MONTH) + 1
+    val label = "${year}年${month}月"
+    cal.add(Calendar.MONTH, 1)
     val end = cal.timeInMillis
-    return start to end
+    return Triple(start, end, label)
 }
 
 @Composable
 fun MainScreen(modifier: Modifier = Modifier, context: android.content.Context) {
-    // 選択中のタブ。0=一覧, 1=集計
     var selectedTab by remember { mutableIntStateOf(0) }
 
     Column(modifier = modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = selectedTab) {
-            Tab(
-                selected = selectedTab == 0,
-                onClick = { selectedTab = 0 },
-                text = { Text("一覧") }
-            )
-            Tab(
-                selected = selectedTab == 1,
-                onClick = { selectedTab = 1 },
-                text = { Text("集計") }
-            )
+            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("一覧") })
+            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("集計") })
         }
 
         when (selectedTab) {
@@ -104,32 +105,87 @@ fun MainScreen(modifier: Modifier = Modifier, context: android.content.Context) 
 
 @Composable
 fun SummaryScreen(context: android.content.Context) {
-    var summary by remember { mutableStateOf<List<CategorySummary>>(emptyList()) }
+    val dao = remember { AppDatabase.getInstance(context).transactionDao() }
 
-    LaunchedEffect(Unit) {
-        val (start, end) = currentMonthRange()
-        val dao = AppDatabase.getInstance(context).transactionDao()
-        summary = withContext(Dispatchers.IO) { dao.getCategorySummary(start, end) }
-    }
+    var monthOffset by remember { mutableIntStateOf(0) }
+    val (start, end, label) = remember(monthOffset) { monthRange(monthOffset) }
+
+    // monthOffsetが変わったらFlowを作り直す（別の月のクエリに切り替わる）。
+    val summaryFlow = remember(monthOffset) { dao.getCategorySummaryFlow(start, end) }
+    val summary by summaryFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     val total = summary.sumOf { it.totalAmount }
 
+    val colors = listOf(
+        Color(0xFF4CAF50), Color(0xFF2196F3), Color(0xFFFF9800), Color(0xFFE91E63),
+        Color(0xFF9C27B0), Color(0xFF00BCD4), Color(0xFFFFEB3B), Color(0xFF795548),
+        Color(0xFF607D8B), Color(0xFFF44336)
+    )
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("今月の支出", fontSize = 20.sp)
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = { monthOffset -= 1 }) { Text("◀ 前月") }
+            Text(label, fontSize = 18.sp)
+            TextButton(
+                onClick = { if (monthOffset < 0) monthOffset += 1 },
+                enabled = monthOffset < 0
+            ) { Text("翌月 ▶") }
+        }
+
         Text("合計 ¥$total", fontSize = 16.sp, modifier = Modifier.padding(vertical = 8.dp))
         HorizontalDivider()
 
         if (summary.isEmpty()) {
-            Text("分類済みの支出がまだありません", modifier = Modifier.padding(top = 16.dp))
+            Text("この月の分類済み支出はありません", modifier = Modifier.padding(top = 16.dp))
         } else {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 200.dp, max = 200.dp)
+                    .padding(vertical = 16.dp)
+            ) {
+                var startAngle = -90f
+                val diameter = size.minDimension
+                val topLeft = Offset((size.width - diameter) / 2f, 0f)
+                summary.forEachIndexed { index, row ->
+                    val sweep = if (total > 0) row.totalAmount.toFloat() / total * 360f else 0f
+                    drawArc(
+                        color = colors[index % colors.size],
+                        startAngle = startAngle,
+                        sweepAngle = sweep,
+                        useCenter = true,
+                        topLeft = topLeft,
+                        size = Size(diameter, diameter)
+                    )
+                    startAngle += sweep
+                }
+            }
+
             LazyColumn {
-                items(summary) { row ->
+                items(summary.size) { index ->
+                    val row = summary[index]
+                    val percent = if (total > 0) row.totalAmount * 100 / total else 0
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(row.majorName, fontSize = 16.sp)
-                        Text("¥${row.totalAmount}", fontSize = 16.sp)
+                        Row {
+                            Canvas(
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .heightIn(min = 16.dp, max = 16.dp)
+                                    .fillMaxWidth(0.05f)
+                            ) {
+                                drawRect(color = colors[index % colors.size])
+                            }
+                            Text(row.majorName, fontSize = 16.sp)
+                        }
+                        Text("¥${row.totalAmount} (${percent}%)", fontSize = 16.sp)
                     }
                     HorizontalDivider()
                 }
@@ -140,19 +196,18 @@ fun SummaryScreen(context: android.content.Context) {
 
 @Composable
 fun TransactionListScreen(context: android.content.Context) {
-    var transactions by remember { mutableStateOf<List<TransactionWithCategory>>(emptyList()) }
+    val dao = remember { AppDatabase.getInstance(context).transactionDao() }
+
+    val transactions by dao.getAllWithCategoryFlow()
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+
     var subcategories by remember { mutableStateOf<List<SubcategoryWithParent>>(emptyList()) }
     var editingTx by remember { mutableStateOf<TransactionWithCategory?>(null) }
     val scope = rememberCoroutineScope()
 
-    suspend fun reload() {
-        val db = AppDatabase.getInstance(context)
-        transactions = withContext(Dispatchers.IO) { db.transactionDao().getAllWithCategory() }
-        subcategories = withContext(Dispatchers.IO) { db.categoryDao().getAllSubcategoriesWithParent() }
-    }
-
     LaunchedEffect(Unit) {
-        reload()
+        val db = AppDatabase.getInstance(context)
+        subcategories = withContext(Dispatchers.IO) { db.categoryDao().getAllSubcategoriesWithParent() }
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -169,7 +224,6 @@ fun TransactionListScreen(context: android.content.Context) {
                             service.classifyTransaction(tx.transactionId, tx.storeName, tx.amount)
                         }
                     }
-                    reload()
                 }
             },
             modifier = Modifier.padding(vertical = 8.dp)
@@ -194,12 +248,11 @@ fun TransactionListScreen(context: android.content.Context) {
             onDismiss = { editingTx = null },
             onSelect = { selectedSubcategoryId ->
                 scope.launch {
-                    val dao = AppDatabase.getInstance(context).transactionDao()
+                    val dao2 = AppDatabase.getInstance(context).transactionDao()
                     withContext(Dispatchers.IO) {
-                        dao.updateCategory(target.transactionId, selectedSubcategoryId)
+                        dao2.updateCategory(target.transactionId, selectedSubcategoryId)
                     }
                     editingTx = null
-                    reload()
                 }
             }
         )
